@@ -90,14 +90,101 @@
   </section>
 
   <script>
-    const SECRET_TOPIC = "clinic-popup-board-3068";
-    const NTFY_URL = `https://ntfy.sh/${SECRET_TOPIC}`;
+    const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbw5Xj7IkcmBppzDesQ9lI5DoU5W4gaRn1KszouJyQYDaEX1L90HA4ONgRYnXmHLVoTF/exec";
+    let lastSeenId = null;
 
-    const eventSource = new EventSource(`${NTFY_URL}/sse`);
-
-    eventSource.onopen = () => {
+    function setConnectedState(active) {
       const dot = document.getElementById('status-dot');
       const label = document.getElementById('connection-text');
-      dot.className = "w-3 h-3 rounded-full bg-emerald-500";
-      label.className = "text-xs font-medium px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200";
-      label.textContent = "
+      if (active) {
+        dot.className = "w-3 h-3 rounded-full bg-emerald-500";
+        label.className = "text-xs font-medium px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200";
+        label.textContent = "Live Sync Active";
+      } else {
+        dot.className = "w-3 h-3 rounded-full bg-rose-500";
+        label.className = "text-xs font-medium px-2.5 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200";
+        label.textContent = "Check Script URL";
+      }
+    }
+
+    async function pollMessages() {
+      if (!SCRIPT_URL.startsWith("https://script.google.com/")) {
+        setConnectedState(false);
+        return;
+      }
+      try {
+        const res = await fetch(`${SCRIPT_URL}?t=${Date.now()}`);
+        const data = await res.json();
+        setConnectedState(true);
+
+        if (data.id && String(data.id) !== String(lastSeenId)) {
+          const isInitialLoad = lastSeenId === null;
+          lastSeenId = data.id;
+
+          if (data.cleared) {
+            renderMessage("No active announcements right now.", "normal", null, false);
+          } else {
+            renderMessage(data.text, data.priority, data.timestamp, !isInitialLoad);
+          }
+        }
+      } catch (err) {
+        console.error("Poll error:", err);
+        setConnectedState(false);
+      }
+    }
+
+    async function sendBroadcast() {
+      const text = document.getElementById('admin-input').value.trim();
+      const priority = document.getElementById('admin-priority').value;
+      if (!text) return alert("Please enter a message first.");
+
+      const payload = {
+        text: text,
+        priority: priority,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        clear: false
+      };
+
+      await fetch(SCRIPT_URL, {
+        method: 'POST',
+        mode: 'no-cors',
+        body: JSON.stringify(payload)
+      });
+
+      document.getElementById('admin-input').value = '';
+      setTimeout(pollMessages, 600);
+    }
+
+    async function clearBroadcast() {
+      await fetch(SCRIPT_URL, {
+        method: 'POST',
+        mode: 'no-cors',
+        body: JSON.stringify({ clear: true })
+      });
+      setTimeout(pollMessages, 600);
+    }
+
+    function renderMessage(text, priority, time, triggerAlert) {
+      const card = document.getElementById('message-card');
+      const badge = document.getElementById('urgency-badge');
+      const msgEl = document.getElementById('display-message');
+      const timeEl = document.getElementById('display-timestamp');
+
+      msgEl.textContent = text;
+      timeEl.textContent = time ? `Sent at ${time}` : "Waiting for broadcast...";
+
+      card.className = "max-w-3xl w-full border-2 rounded-2xl p-8 md:p-12 shadow-sm text-center transition-all duration-300";
+      badge.className = "inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/90 text-xs font-semibold uppercase tracking-wider mb-6 border";
+
+      if (priority === 'urgent') {
+        card.classList.add('bg-rose-50', 'border-rose-300', 'urgent-pulse');
+        badge.classList.add('text-rose-700', 'border-rose-200');
+        badge.textContent = "🚨 Urgent Alert";
+      } else if (priority === 'important') {
+        card.classList.add('bg-amber-50', 'border-amber-300');
+        badge.classList.add('text-amber-800', 'border-amber-200');
+        badge.textContent = "⚠️ Important Notice";
+      } else {
+        card.classList.add('bg-emerald-50/70', 'border-emerald-200');
+        badge.classList.add('text-emerald-800', 'border-emerald-200');
+        badge.textContent = "
